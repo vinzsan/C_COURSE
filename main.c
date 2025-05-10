@@ -4,17 +4,17 @@
 #include <string.h>
 
 typedef struct {
-    void (*Println)(const char *)
+    void (*Println)(const char *);
 } Standard;
-
 
 void print_char(const char *str){
     write(STDOUT_FILENO, str, strlen(str));
 }
 
-static Standard std = {print_char};
-
 int main(){
-    std.Println("Hello world");
+    Standard *std = malloc(sizeof(Standard));
+    std->Println = print_char;
+    std->Println("Hello world");
+    free(std);
     return 0;
 }
