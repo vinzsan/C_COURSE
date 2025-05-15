@@ -93,3 +93,79 @@ int main(){
     free(buff);
     return 0;
 }
+
+// Assembly Backup
+
+#define NULL ((void *)0)
+#define PROT_WRITE 0x02
+#define MAP_ANONYMOUS 0x20
+#define MAP_PRIVATE 0x02
+
+static inline long print(char *str){
+  volatile register long buffer = 0;
+  while(buffer[str]) buffer++;
+  __asm__ __volatile__(
+    "movq $1,%%rax\n\t"
+    "movq $1,%%rdi\n\t"
+    "movq %0,%%rsi\n\t"
+    "movq %1,%%rdx\n\t"
+    "syscall"
+    :
+    :"r"(str),"r"(buffer)
+    :"%rax","%rdi","%rsi","%rdx"
+  );
+  return buffer;
+}
+
+static void *mmap(void *position,long long size,int PROT,int MAP,int fd,int flags){
+  void *ret = 0;
+  __asm__ __volatile__(
+    "movq $9,%%rax\n\t"
+    "movq %1,%%rdi\n\t"
+    "movq %2,%%rsi\n\t"
+    "movq %3,%%rdx\n\t"
+    "movq %4,%%r10\n\t"
+    "movq %5,%%r8\n\t"
+    "movq %6,%%r9\n\t"
+    "syscall\n\t"
+    "movq %%rax,%0"
+    : "=r"(ret)
+    :"r"(position),"r"(size),"r"((long)PROT),"r"((long)MAP),"r"((long)fd),"r"((long)flags)
+    : "%rax","%rdi","%rsi","%rdx","%r10","%r8","%r9"
+  );
+  return ret;
+}
+
+static volatile void munmap(void *pos,long long size){
+  __asm__ __volatile__(
+    "movq $11,%%rax\n\t"
+    "movq %0,%%rdi\n\t"
+    "movq %1,%%rsi\n\t"
+    "syscall"
+    :
+    :"r"(pos),"r"((long)size)
+    :"%rax","%rdi","%rsi"
+  );
+}
+
+static void *strcopy(char *dest, char *str) {
+  if (!dest || !str) return NULL; 
+  char *d = dest;
+  while ((*d++ = *str++));
+  return dest;
+}
+
+typedef struct{
+  void *(*VirtualAlloc)(void *position,long long size,int PROT,int MAP,int fd,int flags);
+} standard;
+
+static standard Win64 = {mmap};
+
+int main(){
+  char *buffer = mmap(NULL, 1024, PROT_WRITE,MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+  strcopy(buffer, "Hello world");
+  print("Hello world\n");
+  print(buffer);
+  munmap(buffer, 1024);
+  return 0;
+}
