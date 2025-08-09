@@ -12,26 +12,50 @@
 #include <cstring>
 #include <future>
 #include <termios.h>
+#include <cstdlib>
+#include <cstdio>
+#include <vector>
 //#include <promises>
 
 #define PORT 8080
 
+
+struct Termios{
+    termios old;
+    Termios(){
+        tcgetattr(STDIN_FILENO,&old);
+        termios tty = old;
+        tty.c_lflag &= ~(ICANON | ECHO);
+        tcsetattr(STDIN_FILENO,TCSANOW,&tty);
+    }
+    ~Termios(){
+        tcsetattr(STDIN_FILENO,TCSANOW,&old);
+    }
+};
+
 void multi_thread(int &sockfd,std::promise<ssize_t> result){
-    const char* header = "HTTP/1.1 200 OK\r\nContent-type:text/html\r\nContent-length:32\r\n\r\n<h1>Hello world</h1>";
-    send(sockfd,header,std::strlen(header),0);
-    char *buff = (char *)std::malloc(1024 * sizeof(char));
+    char string[128];
+    //const char* header = "HTTP/1.1 200 OK\r\nContent-type:text/html\r\nContent-length:32\r\n\r\n<h1>Hello world</h1>";
+    std::snprintf(string,sizeof(string),"HTTP/1.1 200 OK\r\nContent-type:text/html\r\nContent-length:32\r\n\r\n%s","<h1>Hello world</h1>");
+    send(sockfd,string,std::strlen(string),0);
+    char *buff = new char[1024];
     if(buff == NULL){
         std::cerr << "Error allocate buffer" << std::endl;
         return;
     }
     ssize_t max = recv(sockfd,buff,1024,0);
     std::cout << buff << std::endl;
-    std::free(buff);
+    //std::free(buff);
+    delete[] buff;
     close(sockfd);
     result.set_value(max);
 }
 
-int main(){
+int main(int argc,char **argv){
+    if(argc < 2){
+        std::cout << "Use " << argv[0] << " <port>" << std::endl;
+        return -1;
+    }
     int sockfd = socket(AF_INET,SOCK_STREAM,0);
     if(sockfd < 0){
         std::cerr << "Error made socket" << std::endl;
@@ -45,21 +69,23 @@ int main(){
         return -1;
     }
     
-    termios old,tty;
+    //termios old,tty;
+    short port = static_cast<short>(std::stoi(argv[1]));
+    Termios tg;
     try{
         sockaddr_in address;
         address.sin_addr.s_addr = INADDR_ANY;
         address.sin_family = AF_INET;
-        address.sin_port = htons(8080);
+        address.sin_port = htons(port);
         std::memset(&address.sin_zero,0,sizeof(address.sin_zero));
         socklen_t len = sizeof(address);
         if(bind(sockfd,(sockaddr *)&address,len) || listen(sockfd,SOMAXCONN) < 0){
             throw std::runtime_error("Error bind");
         }
-        tcgetattr(STDIN_FILENO,&old);
-        tty = old;
-        tty.c_lflag &= ~(ICANON | ECHO);
-        tcsetattr(STDIN_FILENO,TCSANOW,&tty);
+        //tcgetattr(STDIN_FILENO,&old);
+        //tty = old;
+        //tty.c_lflag &= ~(ICANON | ECHO);
+        //tcsetattr(STDIN_FILENO,TCSANOW,&tty);
         pollfd fds[2];
         fds[0].events = POLLIN;
         fds[0].fd = sockfd;
@@ -67,8 +93,10 @@ int main(){
         fds[1].events = POLLIN;
         while(1){
             int ret = poll(fds,2,5000);
+            std::vector<std::future<ssize_t>> vec;
             std::promise<ssize_t> prom;
-            std::future<ssize_t> result = prom.get_future();
+            vec.push_back(prom.get_future());
+            //std::future<ssize_t> result = prom.get_future();
 
             if(ret < 0){
                 //std::cerr << "Error poll" << std::endl;
@@ -80,9 +108,9 @@ int main(){
                     std::cout << "Client Disconnect" << std::endl;
                     continue;
                 }
-                std::thread tid(multi_thread,std::ref(clientfd),std::move(prom));
-                std::cout << "Size result : " << result.get() << std::endl;
-                tid.detach();
+                std::thread(multi_thread,std::ref(clientfd),std::move(prom)).detach();
+                //std::cout << "Size result : " << result.get() << std::endl;
+                //tid.detach();
             }
             if(fds[1].revents & POLLIN){
                 char c = getchar();
@@ -91,13 +119,27 @@ int main(){
                     break;
                 }
             }
+            for(std::vector<std::future<ssize_t>>::iterator it = vec.begin();it != vec.end();){
+                if(it->wait_for(std::chrono::seconds(0)) == std::future_status::ready){
+                    ssize_t result = it->get();
+                    std::cout << "Size : " << result << std::endl;
+                    it = vec.erase(it);
+                }
+                else{
+                    ++it;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
     catch(std::exception &e){
-        std::cout << "Exception catch" << e.what() << std::endl;
-        tcsetattr(STDIN_FILENO,TCSANOW,&old);
+        //tcsetattr(STDIN_FILENO,TCSANOW,&old);
+        //if(tcsetattr(STDIN_FILENO,TCSANOW,&old) != 0){
+        //    std::cerr << "Error termios" << std::endl;
+        //}
+        std::cout << "Exception catch : " << e.what() << std::endl;
     }
-    tcsetattr(STDIN_FILENO,TCSANOW,&old);
+    //tcsetattr(STDIN_FILENO,TCSANOW,&old);
     close(sockfd);
     return 0;
 }
